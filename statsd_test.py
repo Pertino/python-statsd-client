@@ -162,14 +162,14 @@ class TestStatsdCounter(unittest.TestCase):
         statsd.socket = mock_udp_socket
 
     def test_add(self):
-        counter = statsd.StatsdCounter('counted', 'localhost', 8125, prefix='', sample_rate=None)
+        counter = statsd.StatsdCounter('counted', statsd.StatsdClient('localhost', 8125, prefix='', sample_rate=None))
         counter += 1
         self.assertEqual(counter._client._socket.data, b'counted:1|c')
         counter += 5
         self.assertEqual(counter._client._socket.data, b'counted:5|c')
 
     def test_sub(self):
-        counter = statsd.StatsdCounter('counted', 'localhost', 8125, prefix='', sample_rate=None)
+        counter = statsd.StatsdCounter('counted', statsd.StatsdClient('localhost', 8125, prefix='', sample_rate=None))
         counter -= 1
         self.assertEqual(counter._client._socket.data, b'counted:-1|c')
         counter -= 5
@@ -183,7 +183,7 @@ class TestStatsdTimer(unittest.TestCase):
         statsd.socket = mock_udp_socket
 
     def test_startstop(self):
-        timer = statsd.StatsdTimer('timeit', 'localhost', 8125, prefix='', sample_rate=None)
+        timer = statsd.StatsdTimer('timeit', statsd.StatsdClient('localhost', 8125, prefix='', sample_rate=None))
         timer.start()
         time.sleep(0.25)
         timer.stop()
@@ -191,7 +191,7 @@ class TestStatsdTimer(unittest.TestCase):
         self.assertTrue(timer._client._socket.data.endswith(b'|ms'))
 
     def test_split(self):
-        timer = statsd.StatsdTimer('timeit', 'localhost', 8125, prefix='', sample_rate=None)
+        timer = statsd.StatsdTimer('timeit', statsd.StatsdClient('localhost', 8125, prefix='', sample_rate=None))
         timer.start()
         time.sleep(0.25)
         timer.split('lap')
@@ -204,7 +204,7 @@ class TestStatsdTimer(unittest.TestCase):
 
     def test_wrap(self):
         class TC(object):
-            @statsd.StatsdTimer.wrap('timeit')
+            @statsd.StatsdTimer('timeit')
             def do(self):
                 time.sleep(0.25)
                 return 1
@@ -213,7 +213,7 @@ class TestStatsdTimer(unittest.TestCase):
         self.assertEqual(result, 1)
 
     def test_with(self):
-        timer = statsd.StatsdTimer('timeit', 'localhost', 8125, prefix='', sample_rate=None)
+        timer = statsd.StatsdTimer('timeit', statsd.StatsdClient('localhost', 8125, prefix='', sample_rate=None))
         with timer:
             time.sleep(0.25)
         self.assertTrue(timer._client._socket.data.startswith(b'timeit.total:2'))
@@ -221,3 +221,6 @@ class TestStatsdTimer(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+#com.pertino.<service_name>.<component_name>.<module_name>.<stat_name>.<pertino_fqdn>

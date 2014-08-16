@@ -4,6 +4,7 @@
 # License, Version 2.0. See the NOTICE for more information.
 
 from __future__ import absolute_import
+from functools import wraps
 import random
 from socket import socket, AF_INET, SOCK_DGRAM
 import time
@@ -18,7 +19,6 @@ STATSD_BUCKET_PREFIX = None
 
 def decrement(bucket, delta=1, sample_rate=None):
     _statsd.decr(bucket, delta, sample_rate)
-
 
 def increment(bucket, delta=1, sample_rate=None):
     _statsd.incr(bucket, delta, sample_rate)
@@ -41,6 +41,12 @@ class StatsdClient(object):
         if self._prefix and not isinstance(self._prefix, bytes):
             self._prefix = self._prefix.encode('utf8')
 
+    def timer(self, bucket):
+        return StatsdTimer(bucket, client=self)
+
+    def counter(self, bucket):
+        return StatsdCounter(bucket, client=self)
+
     def decr(self, bucket, delta=1, sample_rate=None):
         """Decrements a counter by delta.
         """
@@ -59,6 +65,9 @@ class StatsdClient(object):
         str_value = str(value).encode('utf8') + b'|g'
         self._send(bucket, str_value, sample_rate)
 
+    def _socket_send(self, stat):
+        self._socket.sendto(stat, (self._host, self._port))
+
     def _send(self, bucket, value, sample_rate=None):
         """Format and send data to statsd.
         """
@@ -76,7 +85,7 @@ class StatsdClient(object):
            if self._prefix:
                stat = self._prefix + b'.' + stat
 
-           self._socket.sendto(stat, (self._host, self._port))
+           self._socket_send(stat)
         except Exception,e:
             _logger.error("Failed to send statsd packet.", exc_info=True)
 
@@ -90,10 +99,8 @@ class StatsdClient(object):
 class StatsdCounter(object):
     """Counter for StatsD.
     """
-    def __init__(self, bucket, host=None, port=None, prefix=None,
-                 sample_rate=None):
-        self._client = StatsdClient(host=host, port=port, prefix=prefix,
-                                    sample_rate=sample_rate)
+    def __init__(self, bucket, statsd_client=None):
+        self._client = statsd_client or StatsdClient()
         self._bucket = bucket if isinstance(bucket, bytes) else bucket.encode('utf8')
 
     def __add__(self, num):
@@ -108,10 +115,8 @@ class StatsdCounter(object):
 class StatsdTimer(object):
     """Timer for StatsD.
     """
-    def __init__(self, bucket, host=None, port=None, prefix=None,
-                 sample_rate=None):
-        self._client = StatsdClient(host=host, port=port, prefix=prefix,
-                                    sample_rate=sample_rate)
+    def __init__(self, bucket, statsd_client=None):
+        self._client = statsd_client or StatsdClient()
         self._bucket = bucket if isinstance(bucket, bytes) else bucket.encode('utf8')
 
     def __enter__(self):
@@ -148,13 +153,11 @@ class StatsdTimer(object):
         self._client.timing(self._bucket + b'.' + bucket_key,
                             self._stop - self._start)
 
-    @staticmethod
-    def wrap(bucket):
-        def wrapper(func):
-            def f(*args, **kw):
-                with StatsdTimer(bucket):
-                    return func(*args, **kw)
-            return f
+    def __call__(self, func):
+        @wraps(func)
+        def wrapper(*args, **kw):
+            with self:
+                return func(*args, **kw)
         return wrapper
 
 
@@ -174,6 +177,8 @@ def init_statsd(settings=None):
                                           STATSD_SAMPLE_RATE)
         STATSD_BUCKET_PREFIX = settings.get('STATSD_BUCKET_PREFIX',
                                             STATSD_BUCKET_PREFIX)
+
+
     _statsd = StatsdClient(host=STATSD_HOST, port=STATSD_PORT,
                            sample_rate=STATSD_SAMPLE_RATE, prefix=STATSD_BUCKET_PREFIX)
     return _statsd

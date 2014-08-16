@@ -28,3 +28,7 @@ nosetests.xml
 
 # Translations
 *.mo
+
+# IDEs
+*.iml
+.idea
