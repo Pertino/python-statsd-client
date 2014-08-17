@@ -42,10 +42,10 @@ class StatsdClient(object):
             self._prefix = self._prefix.encode('utf8')
 
     def timer(self, bucket):
-        return StatsdTimer(bucket, client=self)
+        return StatsdTimer(bucket, statsd_client=self)
 
     def counter(self, bucket):
-        return StatsdCounter(bucket, client=self)
+        return StatsdCounter(bucket, statsd_client=self)
 
     def decr(self, bucket, delta=1, sample_rate=None):
         """Decrements a counter by delta.
@@ -100,7 +100,7 @@ class StatsdCounter(object):
     """Counter for StatsD.
     """
     def __init__(self, bucket, statsd_client=None):
-        self._client = statsd_client or StatsdClient()
+        self._client = statsd_client or _statsd
         self._bucket = bucket if isinstance(bucket, bytes) else bucket.encode('utf8')
 
     def __add__(self, num):
@@ -116,7 +116,7 @@ class StatsdTimer(object):
     """Timer for StatsD.
     """
     def __init__(self, bucket, statsd_client=None):
-        self._client = statsd_client or StatsdClient()
+        self._client = statsd_client or _statsd
         self._bucket = bucket if isinstance(bucket, bytes) else bucket.encode('utf8')
 
     def __enter__(self):

@@ -154,6 +154,24 @@ class TestStatsdClient(unittest.TestCase):
         if client._socket.data != '':
             self.assertTrue(client._socket.data.endswith(b'|@0.999'))
 
+    def test_timer_factory(self):
+        client = statsd.StatsdClient('localhost', 8125, prefix='', sample_rate=0.999)
+        timer = client.timer('timeit')
+        timer.start()
+        time.sleep(0.25)
+        timer.stop()
+        self.assertTrue(timer._client._socket.data.startswith(b'timeit.total:2'))
+        self.assertTrue(timer._client._socket.data.endswith(b'|ms|@0.999'))
+
+    def test_couter_factory(self):
+        client = statsd.StatsdClient('localhost', 8125, prefix='', sample_rate=0.999)
+        counter = client.counter('counted')
+        counter += 1
+        self.assertEqual(counter._client._socket.data, b'counted:1|c|@0.999')
+        counter += 5
+        self.assertEqual(counter._client._socket.data, b'counted:5|c|@0.999')
+
+
 
 class TestStatsdCounter(unittest.TestCase):
 
