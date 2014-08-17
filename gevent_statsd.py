@@ -1,7 +1,11 @@
+# -*- coding: utf-8 -*-
+#
+# This file is part of python-statsd-client released under the Apache
+# License, Version 2.0. See the NOTICE for more information.
+
 from gevent.pool import Pool
 from gevent.socket import socket
 from socket import AF_INET, SOCK_DGRAM
-import statsd
 from statsd import _statsd, StatsdClient
 from statsd import StatsdCounter as StatsdCounterBase
 from statsd import StatsdTimer as StatsdTimerBase
@@ -97,5 +101,7 @@ def init_statsd(settings=None):
 
 _logger = logging.getLogger('statsd')
 _statsd = init_statsd()
-# assuming that you are initializing this module you want to overload the existing statsd
+# assuming that you are initializing this module you want to overload the existing statsd.
+# Let me go ahead and monkey patch that for you.
+import statsd
 statsd._statsd = _statsd
