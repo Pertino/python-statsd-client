@@ -76,6 +76,14 @@ class StatsdTimer(StatsdTimerBase):
         super(StatsdTimer, self).__init__(bucket)
         self._client = statsd_client or GEventStatsdClient()
 
+
+def monkey_patch_statsd():
+    # assuming that you are initializing this module you want to overload the existing statsd.
+    # Let me go ahead and monkey patch that for you.
+    import statsd
+    statsd._statsd = _statsd
+
+
 def init_statsd(settings=None):
     """Initialize global gevent statsd client.
     """
@@ -97,14 +105,11 @@ def init_statsd(settings=None):
                                               STATSD_GREEN_POOL_SIZE)
     _statsd = GEventStatsdClient(host=STATSD_HOST, port=STATSD_PORT,
                                  sample_rate=STATSD_SAMPLE_RATE, prefix=STATSD_BUCKET_PREFIX)
+    monkey_patch_statsd()
     return _statsd
 
 
-def monkey_patch_statsd():
-    # assuming that you are initializing this module you want to overload the existing statsd.
-    # Let me go ahead and monkey patch that for you.
-    import statsd
-    statsd._statsd = _statsd
+
 
 _logger = logging.getLogger('statsd')
 _statsd = init_statsd()
