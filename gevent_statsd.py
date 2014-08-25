@@ -99,9 +99,13 @@ def init_statsd(settings=None):
                                  sample_rate=STATSD_SAMPLE_RATE, prefix=STATSD_BUCKET_PREFIX)
     return _statsd
 
+
+def monkey_patch_statsd():
+    # assuming that you are initializing this module you want to overload the existing statsd.
+    # Let me go ahead and monkey patch that for you.
+    import statsd
+    statsd._statsd = _statsd
+
 _logger = logging.getLogger('statsd')
 _statsd = init_statsd()
-# assuming that you are initializing this module you want to overload the existing statsd.
-# Let me go ahead and monkey patch that for you.
-import statsd
-statsd._statsd = _statsd
+monkey_patch_statsd()
