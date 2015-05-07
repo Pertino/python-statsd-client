@@ -5,6 +5,11 @@
 
 from gevent.pool import Pool
 from gevent.socket import socket
+from gevent import Greenlet
+from gevent import sleep as gSleep
+from gevent.queue import Queue as gQueue
+from gevent.event import Event as gEvent
+
 from socket import AF_INET, SOCK_DGRAM
 from statsd import _statsd, StatsdClient
 from statsd import StatsdCounter as StatsdCounterBase
@@ -33,6 +38,31 @@ def gauge(bucket, value, sample_rate=None):
 def timing(bucket, ms, sample_rate=None):
     _statsd.timing(bucket, ms, sample_rate)
 
+
+class GEventStatsdUDPEmitter(Greenlet):
+    stats_ready = gEvent()
+    stats_queue = gQueue()
+
+    @staticmethod
+    def put_stat(stat):
+        GEventStatsdUDPEmitter.stats_queue.put(stat)
+        GEventStatsdUDPEmitter.stats_ready.set()
+
+    def __init__(self, host, port):
+        self.host, self.port = host, port
+
+    def _run(self):
+        self.running = True
+        while self.running:
+            gSleep(0)
+            if GEventStatsdUDPEmitter.stats_ready.wait(.05):
+                GEventStatsdUDPEmitter.stats_ready.clear()
+                while not GEventStatsdUDPEmitter.stats_queue.empty():
+                    stat = GEventStatsdUDPEmitter.stats_queue.get()
+                    self.socket.send_to(stat, (self.host, self.port))
+                    gSleep(0)
+
+
 class GEventStatsdClient(StatsdClient):
     """ GEvent Enabled statsd client
     """
@@ -60,6 +90,10 @@ class GEventStatsdClient(StatsdClient):
         if not self._send_pool.full():
             # We can't monkey patch this as we don't want to ever block the calling greenlet
             self._send_pool.spawn(self._socket.sendto, stat, (self._host, self._port))
+
+    def _emit_send(self, stat):
+        GEventStatsdUDPEmitter.put_stat(stat)
+
 
 class StatsdCounter(StatsdCounterBase):
     """GEvent version of the Counter for StatsD.
@@ -106,11 +140,22 @@ def init_statsd(settings=None):
     _statsd = GEventStatsdClient(host=STATSD_HOST, port=STATSD_PORT,
                                  sample_rate=STATSD_SAMPLE_RATE, prefix=STATSD_BUCKET_PREFIX)
     monkey_patch_statsd()
-    return _statsd
+
+    _statsd_emitter = GEventStatsdUDPEmitter(STATSD_HOST, STATSD_PORT)
+
+    return _statsd, _statsd_emitter
 
 
+def getStatsd(name):
+    full_namespace = '{existing_prefix}.{caller_name}'.format(existing_prefix=_statsd._prefix, caller_name=name)
+    _statsd_sub = GEventStatsdClient(prefix=full_namespace)
+
+    # attrs from initial init_statsd() call
+    # use the same pool
+    for key in ['_host', '_port', '_sample_rate', '_send_pool']:
+        _statsd_sub.__dict__[key] = _statsd.__dict__[key]
 
 
 _logger = logging.getLogger('statsd')
-_statsd = init_statsd()
+_statsd, _statsd_emitter = init_statsd()
 monkey_patch_statsd()
