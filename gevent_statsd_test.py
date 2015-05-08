@@ -18,7 +18,11 @@ class TestStatsd(unittest.TestCase):
                     'STATSD_PORT': 9999,
                     'STATSD_SAMPLE_RATE': 0.99,
                     'STATSD_BUCKET_PREFIX': 'testing',
-                    'STATSD_GREEN_POOL_SIZE': 50}
+                    'STATSD_GREEN_POOL_SIZE': 50,
+                    'STATSD_USE_EMITTER': True,
+                    'STATSD_EMIT_INTERVAL': 1,
+                    'STATSD_MAX_STAT_EMIT_COUNT': 5}
+
         gevent_statsd.init_statsd(settings)
 
     def tearDown(self):
@@ -34,6 +38,9 @@ class TestStatsd(unittest.TestCase):
         self.assertEqual(gevent_statsd.STATSD_SAMPLE_RATE, 0.99)
         self.assertEqual(gevent_statsd.STATSD_BUCKET_PREFIX, 'testing')
         self.assertEqual(gevent_statsd.STATSD_GREEN_POOL_SIZE, 50)
+        self.assertEqual(gevent_statsd.STATSD_USE_EMITTER, True)
+        self.assertEqual(gevent_statsd.STATSD_EMIT_INTERVAL, 1)
+        self.assertEqual(gevent_statsd.STATSD_MAX_STAT_EMIT_COUNT, 5)
 
     def test_send_pool_is_full(self):
         mock_gevent_pool = mock(gevent_pool)
@@ -218,7 +225,6 @@ class TestStatsdCounter(unittest.TestCase):
 
 class TestStatsdTimer(unittest.TestCase):
 
-
     def test_startstop(self):
         mock_gevent_pool = mock(gevent_pool)
         when(mock_gevent_pool).full().thenReturn(False)
@@ -270,6 +276,14 @@ class TestStatsdTimer(unittest.TestCase):
         with timer:
             time.sleep(0.25)
         verify(mock_gevent_pool).spawn(any(), contains(b'timeit.total:'), any())
+
+
+class TestGEventStatsUDPEmitter(unittest.TestCase):
+    def setUp(self):
+        pass
+
+    def tearDown(self):
+        pass
 
 if __name__ == '__main__':
     unittest.main()

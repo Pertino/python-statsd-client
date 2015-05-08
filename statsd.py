@@ -17,14 +17,18 @@ STATSD_PORT = 8125
 STATSD_SAMPLE_RATE = None
 STATSD_BUCKET_PREFIX = None
 
+
 def decrement(bucket, delta=1, sample_rate=None):
     _statsd.decr(bucket, delta, sample_rate)
+
 
 def increment(bucket, delta=1, sample_rate=None):
     _statsd.incr(bucket, delta, sample_rate)
 
+
 def gauge(bucket, value, sample_rate=None):
     _statsd.gauge(bucket, value, sample_rate)
+
 
 def timing(bucket, ms, sample_rate=None):
     _statsd.timing(bucket, ms, sample_rate)
@@ -32,10 +36,11 @@ def timing(bucket, ms, sample_rate=None):
 
 class StatsdClient(object):
 
-    def __init__(self, host=None, port=None, prefix=None, sample_rate=None):
+    def __init__(self, host=None, port=None, prefix=None, sample_rate=None, emitter=None):
         self._host = host or STATSD_HOST
         self._port = port or STATSD_PORT
         self._sample_rate = sample_rate or STATSD_SAMPLE_RATE
+        self._emitter = emitter
         self._socket = socket(AF_INET, SOCK_DGRAM)
         self._prefix = prefix or STATSD_BUCKET_PREFIX
         if self._prefix and not isinstance(self._prefix, bytes):
@@ -50,50 +55,59 @@ class StatsdClient(object):
     def decr(self, bucket, delta=1, sample_rate=None):
         """Decrements a counter by delta.
         """
-        value = str(-1 * delta).encode('utf8') + b'|c'
-        self._send(bucket, value, sample_rate)
+        value = -1 * delta
+        postfix = b'|c'
+        self._send(bucket, value, postfix, sample_rate)
 
     def incr(self, bucket, delta=1, sample_rate=None):
         """Increment a counter by delta.
         """
-        value = str(delta).encode('utf8') + b'|c'
-        self._send(bucket, value, sample_rate)
+        value = delta
+        postfix = b'|c'
+        self._send(bucket, value, postfix, sample_rate)
 
     def gauge(self, bucket, value, sample_rate=None):
         """Send a gauge value.
         """
-        str_value = str(value).encode('utf8') + b'|g'
-        self._send(bucket, str_value, sample_rate)
-
-    def _socket_send(self, stat):
-        self._socket.sendto(stat, (self._host, self._port))
-
-    def _send(self, bucket, value, sample_rate=None):
-        """Format and send data to statsd.
-        """
-        try:
-           bucket = bucket if isinstance(bucket, bytes) else bucket.encode('utf8')
-
-           sample_rate = sample_rate or self._sample_rate
-           if sample_rate and sample_rate < 1.0 and sample_rate > 0:
-               if random.random() <= sample_rate:
-                   value = value + b'|@' + str(sample_rate).encode('utf8')
-               else:
-                   return
-
-           stat = bucket + b':' + value
-           if self._prefix:
-               stat = self._prefix + b'.' + stat
-
-           self._socket_send(stat)
-        except Exception,e:
-            _logger.error("Failed to send statsd packet.", exc_info=True)
+        postfix = b'|g'
+        self._send(bucket, value, postfix, sample_rate)
 
     def timing(self, bucket, ms, sample_rate=None):
         """Creates a timing sample.
         """
-        value = str(ms).encode('utf8') + b'|ms'
-        self._send(bucket, value, sample_rate)
+        value = ms
+        postfix = b'|ms'
+        self._send(bucket, value, postfix, sample_rate)
+
+    def _socket_send(self, stat):
+        self._socket.sendto(stat, (self._host, self._port))
+
+    def _send(self, bucket, value, postfix, sample_rate=None):
+        """Format and send data to statsd.
+        """
+        try:
+            bucket = bucket if isinstance(bucket, bytes) else bucket.encode('utf8')
+
+            sample_rate = sample_rate or self._sample_rate
+            if sample_rate and (0 < sample_rate < 1.0):
+                if random.random() <= sample_rate:
+                    value = value + b'|@' + str(sample_rate).encode('utf8')
+                else:
+                    return
+
+            if self._prefix:
+                bucket = self._prefix + b'.' + bucket
+
+            if self._emitter:
+                self._emitter.put_stat(bucket, value, postfix)
+            else:
+                stat = bucket + b':' + str(value).encode('utf8') + postfix
+                self._socket_send(stat)
+
+        except Exception, e:
+            _logger.error("Failed to send statsd packet.", exc_info=True)
+
+
 
 
 class StatsdCounter(object):
