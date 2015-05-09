@@ -91,23 +91,24 @@ class StatsdClient(object):
             sample_rate = sample_rate or self._sample_rate
             if sample_rate and (0 < sample_rate < 1.0):
                 if random.random() <= sample_rate:
-                    value = value + b'|@' + str(sample_rate).encode('utf8')
+                    sample_rate = b'|@' + str(sample_rate).encode('utf8')
                 else:
                     return
+            else:
+                sample_rate = None
 
             if self._prefix:
                 bucket = self._prefix + b'.' + bucket
 
-            if self._emitter:
-                self._emitter.put_stat(bucket, value, postfix)
+            if self._emitter is not None:
+                self._emitter.put_stat(bucket, value, postfix, sample_rate)
             else:
-                stat = bucket + b':' + str(value).encode('utf8') + postfix
+                stat = '{bucket}:{value}{postfix}{sample_rate}'.\
+                    format(bucket=bucket, value=str(value).encode('utf8'), sample_rate=sample_rate or '', postfix=postfix)
                 self._socket_send(stat)
 
         except Exception, e:
             _logger.error("Failed to send statsd packet.", exc_info=True)
-
-
 
 
 class StatsdCounter(object):

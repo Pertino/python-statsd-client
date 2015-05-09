@@ -4,7 +4,7 @@
 # License, Version 2.0. See the NOTICE for more information.
 
 from gevent.pool import Pool
-from gevent.socket import socket
+from gevent.socket import socket as gevent_socket
 from gevent import Greenlet
 from gevent import sleep as gSleep
 from gevent.queue import Queue as gQueue
@@ -25,7 +25,7 @@ STATSD_PORT = 8125
 STATSD_SAMPLE_RATE = None
 STATSD_BUCKET_PREFIX = None
 STATSD_GREEN_POOL_SIZE = 50
-STATSD_USE_EMITTER = False
+STATSD_USE_EMITTER = True
 STATSD_EMIT_INTERVAL = 5
 STATSD_MAX_STAT_EMIT_COUNT = 50
 
@@ -44,25 +44,31 @@ def timing(bucket, ms, sample_rate=None):
 
 class GEventStatsdUDPEmitter(Greenlet):
 
-    stats_ready = gEvent()
-    stats_queue = gQueue()
-
-    @staticmethod
-    def put_stat(bucket, value, postfix):
-        GEventStatsdUDPEmitter.stats_queue.put((bucket, value, postfix))
-        GEventStatsdUDPEmitter.stats_ready.set()
-
     def __init__(self, host, port, max_stat_count_payload=None, emit_interval_seconds=None):
-        self._host, self.port = host, port
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        super(GEventStatsdUDPEmitter, self).__init__()
+        self._host, self._port = host, port
+        self._socket = gevent_socket(AF_INET, SOCK_DGRAM)
         self._max_payload = max_stat_count_payload or 50
         self._emit_interval = emit_interval_seconds or 5
+        self._stop_request = gEvent()
+        self._stats_ready = gEvent()
+        self._stats_queue = gQueue()
+
+    def put_stat(self, bucket, value, postfix, sample_rate):
+        self._stats_ready.set()
+        self._stats_queue.put((bucket, value, postfix, sample_rate))
+
+    def start(self):
+        self._stop_request.clear()
+        super(GEventStatsdUDPEmitter, self).start()
+
+    def stop(self):
+        self._stop_request.set()
 
     def _run(self):
         self.running = True
         last_emit = time.time()
-        while self.running:
-            GEventStatsdUDPEmitter.stats_ready.wait(self._emit_interval - (time.time() - last_emit))
+        while not self._stop_request.is_set():
             # temporarily store here for aggregation and averaging
             stats = {b'|c': dict(), b'|g': dict(), b'|ms': dict()}
             # need to know the occurrence of each timer for average's sake
@@ -71,35 +77,40 @@ class GEventStatsdUDPEmitter(Greenlet):
             count = 0
 
             # while stats on queue, max payload not exceed, and emit interval not reached
-            while not GEventStatsdUDPEmitter.stats_queue.empty() \
-                    and count < self.max_payload \
-                    and time.time() - self._last_emit < self.emit_interval:
-                bucket, value, postfix = GEventStatsdUDPEmitter.stats_queue.get()
+            while not self._stats_queue.empty() \
+                    and count <= self._max_payload:
+                bucket, value, postfix, sample_rate = self._stats_queue.get()
+                count += 1
+                bucket_value_samplerate = '%s:{value}{postfix}%s' % (bucket, sample_rate or '')
                 if postfix == b'|ms':
                     # we need to average the timers, so what was it
-                    prev_time = stats[postfix].get(bucket, 0)
+                    prev_time = stats[postfix].get(bucket_value_samplerate, 0)
                     # total time of all the times this thing has reported
-                    sum_time = prev_time * timers_occ.get(bucket, 0) + value
+                    sum_time = prev_time * timers_occ.get(bucket_value_samplerate, 0) + value
                     # number of times this thing has reported
-                    timers_occ[bucket] = timers_occ.get(bucket, 0) + 1
+                    timers_occ[bucket_value_samplerate] = timers_occ.get(bucket_value_samplerate, 0) + 1
                     # average time
-                    avg_time = sum_time / timers_occ[bucket]
+                    avg_time = float(sum_time) / float(timers_occ[bucket_value_samplerate])
                     # stash it
-                    stats[postfix][bucket] = avg_time
+                    stats[postfix][bucket_value_samplerate] = avg_time
                 else:
                     # incr or decr
-                    stats[postfix][bucket] = value + stats[postfix].get(bucket, 0)
+                    stats[postfix][bucket_value_samplerate] = value + stats[postfix].get(bucket_value_samplerate, 0)
                 gSleep(0)
 
             if count != 0:
-                payload = '\n'.join('\n'.join('{bucket}:{value}{postfix}'.format(bucket=bucket, value=value, postfix=stat_type)
-                                              for bucket, value in stat_map.iteritems()) for stat_type, stat_map in stats.iteritems())
+                payload = '\n'.join('\n'.join(bucket_value_samplerate.format(value=int(value), postfix=stat_type)
+                                              for bucket_value_samplerate, value in stat_map.iteritems()) for stat_type, stat_map in stats.iteritems())
 
                 self._socket.sendto(payload.strip(), (self._host, self._port))
                 last_emit = time.time()
 
-            if GEventStatsdUDPEmitter.stats_queue.empty():
-                GEventStatsdUDPEmitter.stats_ready.clear()
+            if self._stats_queue.empty():
+                self._stats_ready.clear()
+
+            gSleep(0)
+
+        self.running = False
 
 
 class GEventStatsdClient(StatsdClient):
@@ -117,7 +128,7 @@ class GEventStatsdClient(StatsdClient):
         """
         super(GEventStatsdClient, self).__init__(host, port, prefix, sample_rate, emitter)
         self._send_pool = Pool(pool_size or STATSD_GREEN_POOL_SIZE)
-        self._socket = socket(AF_INET, SOCK_DGRAM)
+        self._socket = gevent_socket(AF_INET, SOCK_DGRAM)
 
     def _socket_send(self, stat):
         """
@@ -158,6 +169,7 @@ def init_statsd(settings=None):
     """Initialize global gevent statsd client.
     """
     global _statsd
+    global _statsd_emitter
     global STATSD_GREEN_POOL_SIZE
     global STATSD_HOST
     global STATSD_PORT
@@ -181,21 +193,23 @@ def init_statsd(settings=None):
         STATSD_EMIT_INTERVAL = settings.get('STATSD_EMIT_INTERVAL', STATSD_EMIT_INTERVAL)
         STATSD_MAX_STAT_EMIT_COUNT = settings.get('STATSD_MAX_STAT_EMIT_COUNT', STATSD_MAX_STAT_EMIT_COUNT)
 
+    _statsd_emitter = None
+    if STATSD_USE_EMITTER:
+        _statsd_emitter = GEventStatsdUDPEmitter(STATSD_HOST, STATSD_PORT, STATSD_MAX_STAT_EMIT_COUNT,
+                                                 STATSD_EMIT_INTERVAL)
+
     _statsd = GEventStatsdClient(host=STATSD_HOST, port=STATSD_PORT,
                                  sample_rate=STATSD_SAMPLE_RATE, prefix=STATSD_BUCKET_PREFIX,
-                                 emitter=[None, GEventStatsdUDPEmitter][STATSD_USE_EMITTER])
+                                 emitter=_statsd_emitter)
     monkey_patch_statsd()
 
-    _statsd_emitter = None
 
-    if STATSD_USE_EMITTER:
-        _statsd_emitter = GEventStatsdUDPEmitter(STATSD_HOST, STATSD_PORT)
-        _statsd_emitter.start()
 
     return _statsd, _statsd_emitter
 
 
 def getStatsd(name):
+    global _statsd
     full_namespace = '{existing_prefix}.{caller_name}'.format(existing_prefix=_statsd._prefix, caller_name=name)
     _statsd_sub = GEventStatsdClient(prefix=full_namespace)
 
@@ -203,6 +217,18 @@ def getStatsd(name):
     # use the same pool
     for key in ['_host', '_port', '_sample_rate', '_send_pool']:
         _statsd_sub.__dict__[key] = _statsd.__dict__[key]
+
+    return _statsd_sub
+
+
+def start_emitter():
+    global _statsd_emitter
+    _statsd_emitter.start()
+
+def stop_emitter():
+    global _statsd_emitter
+    _statsd_emitter.stop()
+    _statsd_emitter.join()
 
 
 
