@@ -56,7 +56,6 @@ class GEventStatsdClient(StatsdClient):
         :param stat: Stat string to write
         """
         # if we exceed the pool we drop the stat on the floor
-        _logger.debug("This is the gevent socket send! Data: %s", stat)
         if not self._send_pool.full():
             # We can't monkey patch this as we don't want to ever block the calling greenlet
             self._send_pool.spawn(self._socket.sendto, stat, (self._host, self._port))
